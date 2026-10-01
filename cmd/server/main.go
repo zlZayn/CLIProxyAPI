@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/joho/godotenv"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/browser"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/cmd"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -136,7 +138,7 @@ func main() {
 	flag.BoolVar(&codexLogin, "codex-login", false, "Login to Codex using OAuth")
 	flag.BoolVar(&codexDeviceLogin, "codex-device-login", false, "Login to Codex using device code flow")
 	flag.BoolVar(&claudeLogin, "claude-login", false, "Login to Claude using OAuth")
-	flag.BoolVar(&noBrowser, "no-browser", false, "Don't open browser automatically for OAuth")
+	flag.BoolVar(&noBrowser, "no-browser", false, "Don't open the browser automatically (OAuth flows and the management control panel)")
 	flag.IntVar(&oauthCallbackPort, "oauth-callback-port", 0, "Override OAuth callback port (defaults to provider-specific port)")
 	flag.BoolVar(&antigravityLogin, "antigravity-login", false, "Login to Antigravity using OAuth")
 	flag.BoolVar(&kimiLogin, "kimi-login", false, "Login to Kimi (.com) using OAuth")
@@ -825,6 +827,9 @@ func main() {
 			managementasset.StartAutoUpdater(context.Background(), configFilePath)
 			misc.StartAntigravityVersionUpdater(context.Background())
 			startModelCatalogUpdaters(localModel, cfg.Home.Enabled)
+			if shouldOpenControlPanel(cfg, noBrowser) {
+				go openControlPanelWhenReady(cfg)
+			}
 			cmd.StartServiceWithPluginHost(cfg, configFilePath, password, pluginHost, serverOptions...)
 		}
 	}
@@ -872,6 +877,72 @@ func startModelCatalogUpdaters(localModel, homeEnabled bool) {
 		registry.StartModelsUpdater(context.Background())
 	} else if homeEnabled {
 		log.Info("Home mode: remote models.json updates disabled; Codex client model list follows Home model IDs")
+	}
+}
+
+// shouldOpenControlPanel reports whether the management control panel should be
+// opened in the default browser after the local server starts.
+func shouldOpenControlPanel(cfg *config.Config, noBrowser bool) bool {
+	if cfg == nil || noBrowser {
+		return false
+	}
+	if cfg.Home.Enabled || cfg.RemoteManagement.DisableControlPanel {
+		return false
+	}
+	// An empty management key disables the Management API, so the panel route returns 404.
+	return strings.TrimSpace(cfg.RemoteManagement.SecretKey) != ""
+}
+
+// openControlPanelWhenReady waits until the local server accepts connections and then
+// opens the management control panel in the default browser. It is best effort: an
+// unreachable server or a missing browser is logged at debug level only.
+func openControlPanelWhenReady(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	addr := net.JoinHostPort(controlPanelHost(cfg), strconv.Itoa(cfg.Port))
+	if !waitForServerReady(addr, 15*time.Second) {
+		log.Debugf("control panel is not reachable at %s: skipping automatic browser launch", addr)
+		return
+	}
+
+	scheme := "http"
+	if cfg.TLS.Enable {
+		scheme = "https"
+	}
+	panelURL := fmt.Sprintf("%s://%s/management.html", scheme, addr)
+	if errOpen := browser.OpenURL(panelURL); errOpen != nil {
+		log.Debugf("failed to open control panel in browser: %v", errOpen)
+	}
+}
+
+// controlPanelHost resolves the host used to reach the local server from this machine.
+// Wildcard binds are reached through the loopback address.
+func controlPanelHost(cfg *config.Config) string {
+	host := strings.Trim(strings.TrimSpace(cfg.Host), "[]")
+	switch host {
+	case "", "*", "0.0.0.0", "::", "localhost":
+		return "127.0.0.1"
+	default:
+		return host
+	}
+}
+
+// waitForServerReady polls addr until it accepts a TCP connection or the timeout elapses.
+func waitForServerReady(addr string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, errDial := net.DialTimeout("tcp", addr, 300*time.Millisecond)
+		if errDial == nil {
+			if errClose := conn.Close(); errClose != nil {
+				log.Debugf("failed to close management probe connection: %v", errClose)
+			}
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

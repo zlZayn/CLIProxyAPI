@@ -37,6 +37,7 @@ GEMINI.md
 AGENTS.override.md
 
 # Tooling metadata
+.toolchain/
 .vscode/*
 .worktrees/
 .codex/*
@@ -67,3 +68,8 @@ docker-compose.override.yml
 
 # Local LLM Wiki vault
 .llm-wiki
+
+# Local-only: personal backups and scratch sources (not part of upstream)
+*.bak
+*.bak-*
+plugin-src/

@@ -31,6 +31,58 @@ func TestArgvEnablesBoolFlag(t *testing.T) {
 	}
 }
 
+func TestShouldOpenControlPanel(t *testing.T) {
+	panelEnabled := func() *config.Config {
+		return &config.Config{RemoteManagement: config.RemoteManagement{SecretKey: "key"}}
+	}
+
+	tests := []struct {
+		name      string
+		cfg       *config.Config
+		noBrowser bool
+		want      bool
+	}{
+		{name: "panel enabled", cfg: panelEnabled(), want: true},
+		{name: "no-browser flag set", cfg: panelEnabled(), noBrowser: true, want: false},
+		{name: "nil config", cfg: nil, want: false},
+		{name: "management key missing", cfg: &config.Config{}, want: false},
+		{name: "blank management key", cfg: &config.Config{RemoteManagement: config.RemoteManagement{SecretKey: "  "}}, want: false},
+		{name: "control panel disabled", cfg: &config.Config{RemoteManagement: config.RemoteManagement{SecretKey: "key", DisableControlPanel: true}}, want: false},
+		{name: "home mode", cfg: &config.Config{Home: config.HomeConfig{Enabled: true}, RemoteManagement: config.RemoteManagement{SecretKey: "key"}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldOpenControlPanel(tt.cfg, tt.noBrowser); got != tt.want {
+				t.Fatalf("shouldOpenControlPanel() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestControlPanelHost(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "empty host binds all interfaces", host: "", want: "127.0.0.1"},
+		{name: "wildcard ipv4", host: "0.0.0.0", want: "127.0.0.1"},
+		{name: "wildcard ipv6", host: "::", want: "127.0.0.1"},
+		{name: "bracketed ipv6 wildcard", host: "[::]", want: "127.0.0.1"},
+		{name: "wildcard star", host: "*", want: "127.0.0.1"},
+		{name: "localhost", host: " localhost ", want: "127.0.0.1"},
+		{name: "explicit loopback", host: "127.0.0.1", want: "127.0.0.1"},
+		{name: "explicit address", host: "192.168.1.10", want: "192.168.1.10"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := controlPanelHost(&config.Config{Host: tt.host}); got != tt.want {
+				t.Fatalf("controlPanelHost(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShouldEnableExampleAPIKeySafeMode(t *testing.T) {
 	cfgWithExampleKey := &config.Config{
 		SDKConfig: config.SDKConfig{
