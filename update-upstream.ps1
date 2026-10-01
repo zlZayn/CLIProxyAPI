@@ -18,7 +18,7 @@ try {
     }
 
     Write-Host "fetching upstream tags ..."
-    git -c http.proxy=$proxy fetch upstream --tags
+    git -c http.proxy=$proxy -c http.sslBackend=openssl fetch upstream --tags
     if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
 
     $tag = (git tag --list "v*" --sort=-v:refname | Select-Object -First 1)
@@ -29,8 +29,9 @@ try {
     git rebase $tag
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Host "Rebase stopped. To finish after fixing the files: git rebase --continue" -ForegroundColor Yellow
-        Write-Host "To undo everything:                                git rebase --abort" -ForegroundColor Yellow
+        Write-Host "Rebase stopped. To finish after fixing the files:  git rebase --continue" -ForegroundColor Yellow
+        Write-Host "To drop the conflicting local commit:             git rebase --skip" -ForegroundColor Yellow
+        Write-Host "To undo everything:                               git rebase --abort" -ForegroundColor Yellow
         exit 1
     }
 } finally {

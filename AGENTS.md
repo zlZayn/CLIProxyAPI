@@ -4,6 +4,7 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 
 ## Repository
 - GitHub: https://github.com/router-for-me/CLIProxyAPI
+- This checkout is a personal fork with local-only changes; read "Local Setup" at the bottom before rebuilding or updating anything.
 
 ## Commands
 ```bash
@@ -60,3 +61,49 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Avoid wall-clock `time.Sleep` in TTL, expiration, ordering, or cache-eviction unit tests due to platform timer granularity (e.g. Windows default timer resolution of ~15.6ms) and CI jitter under load; prefer controllable clocks (`nowFunc` / mock clock), explicit timestamp manipulation, or deterministic synchronization primitives.
 - Note: if modifying features that involve CLIProxyAPIHome, check if corresponding updates are needed in the CLIProxyAPIHome repository.
 - Endpoints under the `/v0/management` base URL are deprecated and no longer maintained. For any feature changes, do not modify endpoints under `/v0/management` unless necessary to fix compilation errors.
+
+## Local Setup (personal fork, not upstreamed)
+
+Windows-only personal build. The binary is produced locally and is the only thing that is actually used; no PR is ever sent upstream.
+
+### Remotes and branches
+- `origin` = https://github.com/zlZayn/CLIProxyAPI (personal **public** fork, backup only)
+- `upstream` = https://github.com/router-for-me/CLIProxyAPI
+- `local-autobrowser` = the working branch, based on upstream tag `v8.0.7`, carrying the local commits listed below. Rebase this branch onto new upstream release tags; do not develop on `main`.
+- `main` is kept identical to `upstream/main` (reset with `git branch -f main upstream/main`).
+- github.com is **not** reachable directly from this machine. Route git traffic through the local proxy: `git -c http.proxy=http://127.0.0.1:7897 ...` (7897 is the local Clash/mihomo mixed port). The proxy is occasionally flaky; retry on `schannel: failed to receive handshake`.
+
+### Local commits on `local-autobrowser`
+1. `local: open the management control panel on startup`
+2. `local: add helper scripts to rebuild and update from upstream`
+
+### Local feature: open the control panel on startup
+- `cmd/server/main.go`: `shouldOpenControlPanel`, `openControlPanelWhenReady`, `controlPanelHost`, `waitForServerReady`; wired in the plain-server branch of `main()` right before `cmd.StartServiceWithPluginHost`.
+- Opens `http(s)://<host>:<port>/management.html` in the default browser once the port accepts a TCP connection (15s budget, best effort).
+- Skipped when: `--no-browser`, `Home.Enabled`, `remote-management.disable-control-panel`, or an empty management key (Management API disabled). Skips and failures only log at debug level.
+- `--no-browser` now covers both the OAuth flows and the control panel; its help text was updated accordingly.
+- Unit tests: `TestShouldOpenControlPanel`, `TestControlPanelHost` in `cmd/server/main_test.go`.
+
+### Build and update
+- `powershell -ExecutionPolicy Bypass -File .\build-local.ps1` — rebuilds `cli-proxy-api.exe` (Windows/amd64, CGO on, MinGW from `.toolchain/mingw64/bin`, `GOPROXY=https://goproxy.cn,direct`). Version/commit come from the nearest git tag, and it refuses to run while the exe is running.
+- `powershell -ExecutionPolicy Bypass -File .\update-upstream.ps1` — fetches `upstream` tags through the proxy, rebases the current branch onto the newest `v*` tag, then rebuilds.
+- The upstream release is built with `CGO_ENABLED=1` on Windows, so dynamic-library plugins only work when the local build does the same (hence the MinGW toolchain).
+
+### Runtime environment (never commit)
+- `config.yaml` — server `host`/`port` (8317) and `remote-management.secret-key`, stored as a **bcrypt hash** (both v7 and v8 accept that form; v8 hashes plaintext on startup and writes the hash back). Also configures `plugins.configs` per plugin.
+- `plugins/*.dll` — from https://github.com/mmqz/cpa-multi-plugins releases (`cpa-multi-plugins-windows-amd64.zip`); each plugin must be explicitly enabled under `plugins.configs`, otherwise the host does not even load it. Previous DLLs are kept as `plugins/<id>.dll.bak-<version>`.
+- `static/management.html` — auto-downloaded control panel (Cli-Proxy-API-Management-Center), refreshed every ~3h. Panel v1.25+ requires the **v8** Management API (`/v8/management`), so an old (v7) backend makes the panel fail with "legacy backend"; this is why the build must stay on v8.
+- `auths/`, `logs/`, `.toolchain/`, the exe itself, and `*.bak*` backups are git-ignored.
+- `plugin-src/` holds local plugin sources (standalone Go module) and is git-ignored; back it up separately if needed.
+- Gotcha: `.toolchain/` contains ~11.9k files. If its `.gitignore` entry is ever dropped, the IDE source-control panel reports thousands of untracked files.
+
+### Keeping this file and resolving rebase conflicts
+- `AGENTS.md` is tracked by upstream (the `.gitignore` entry does not apply to tracked files), so the local notes above live in a local commit together with the helper scripts. That keeps the working tree clean, which the rebase in `update-upstream.ps1` requires.
+- If a rebase stops on a conflict:
+  - fix the files, `git add` them, then `git rebase --continue`
+  - or drop the conflicting local commit with `git rebase --skip`
+  - or undo the whole rebase with `git rebase --abort`
+- After a successful rebase, run `build-local.ps1` to produce a matching exe, and keep `main` aligned with `upstream/main` (`git branch -f main upstream/main`).
+- Pushing from this machine needs the proxy **and** the OpenSSL TLS backend:
+  `git -c http.proxy=http://127.0.0.1:7897 -c http.sslBackend=openssl push origin local-autobrowser`
+  (the default schannel backend intermittently fails with `failed to receive handshake`).
